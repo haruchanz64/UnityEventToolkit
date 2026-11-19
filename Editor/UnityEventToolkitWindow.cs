@@ -43,6 +43,8 @@ namespace UnityEventToolkit.Editor
             EditorApplication.hierarchyChanged += OnHierarchyChanged;
             EditorSceneManager.sceneOpened += OnSceneOpened;
             EditorSceneManager.sceneClosed += OnSceneClosed;
+            PrefabStage.prefabStageOpened += OnPrefabStageChanged;
+            PrefabStage.prefabStageClosing += OnPrefabStageChanged;
             Undo.undoRedoPerformed += OnUndoRedoPerformed;
             EditorApplication.update += OnUpdate;
         }
@@ -52,11 +54,15 @@ namespace UnityEventToolkit.Editor
             EditorApplication.hierarchyChanged -= OnHierarchyChanged;
             EditorSceneManager.sceneOpened -= OnSceneOpened;
             EditorSceneManager.sceneClosed -= OnSceneClosed;
+            PrefabStage.prefabStageOpened -= OnPrefabStageChanged;
+            PrefabStage.prefabStageClosing -= OnPrefabStageChanged;
             Undo.undoRedoPerformed -= OnUndoRedoPerformed;
             EditorApplication.update -= OnUpdate;
         }
 
         private void OnHierarchyChanged() => _isDirty = true;
+
+        private void OnPrefabStageChanged(PrefabStage _) => _isDirty = true;
 
         private void OnUndoRedoPerformed() => _isDirty = true;
 

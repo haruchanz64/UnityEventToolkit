@@ -1,6 +1,6 @@
 # Unity Event Toolkit
 
-**Unity Event Toolkit** is a custom Unity Editor tool that makes it easy to find, inspect, and clean up `UnityEvent` bindings in your scenes.
+**Unity Event Toolkit** is a custom Unity Editor tool for **Unity 6 (6000.0+)** that makes it easy to find, inspect, and clean up `UnityEvent` bindings in your scenes and prefabs.
 
 ---
 
@@ -19,11 +19,19 @@
 
 ## Installation
 
-**Option 1: Download ZIP**
+**Option 1: Unity Package Manager (Recommended)**
+1. Open `Window > Package Manager` in Unity 6.
+2. Click `+` > **Install package from git URL...**
+3. Enter:
+   ```text
+   https://github.com/haruchanz64/UnityEventToolkit.git
+   ```
+
+**Option 2: Download ZIP**
 1. Download the repository as a **ZIP** (`Code > Download ZIP`).
 2. Extract and drop the folder into your Unity project's `Assets` directory.
 
-**Option 2: Git Clone**
+**Option 3: Git Clone**
 1. Clone this repository directly into your Unity project's `Assets` directory:
    ```bash
    git clone https://github.com/haruchanz64/UnityEventToolkit.git Assets/UnityEventToolkit

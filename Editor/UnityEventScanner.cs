@@ -2,8 +2,10 @@
 using System.Collections.Generic;
 using System.Reflection;
 using UnityEditor;
+using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.Events;
+using UnityEngine.SceneManagement;
 using Object = UnityEngine.Object;
 
 namespace UnityEventToolkit.Editor
@@ -31,16 +33,23 @@ namespace UnityEventToolkit.Editor
         {
             var events = new List<EventEntry>();
 
-            // Scene GameObjects (including inactive ones)
-            foreach (var go in Object.FindObjectsByType<GameObject>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+            var prefabStage = PrefabStageUtility.GetCurrentPrefabStage();
+            if (prefabStage != null && prefabStage.prefabContentsRoot)
             {
-                if (!go || !go.scene.IsValid() || EditorUtility.IsPersistent(go))
-                    continue;
-
-                foreach (var component in go.GetComponents<MonoBehaviour>())
+                ScanGameObjectHierarchy(prefabStage.prefabContentsRoot, events);
+            }
+            else
+            {
+                // Scan all loaded scenes (including inactive GameObjects)
+                for (var i = 0; i < SceneManager.sceneCount; i++)
                 {
-                    if (!component) continue;
-                    ScanFields(component, component, go.name, events);
+                    var scene = SceneManager.GetSceneAt(i);
+                    if (!scene.isLoaded) continue;
+
+                    foreach (var root in scene.GetRootGameObjects())
+                    {
+                        ScanGameObjectHierarchy(root, events);
+                    }
                 }
             }
 
@@ -57,6 +66,19 @@ namespace UnityEventToolkit.Editor
             }
 
             return events;
+        }
+
+        private static void ScanGameObjectHierarchy(GameObject root, List<EventEntry> events)
+        {
+            if (!root) return;
+
+            foreach (var component in root.GetComponentsInChildren<MonoBehaviour>(true))
+            {
+                if (!component) continue;
+                if ((component.gameObject.hideFlags & HideFlags.HideInHierarchy) != 0) continue;
+
+                ScanFields(component, component, component.gameObject.name, events);
+            }
         }
 
         private static void ScanFields(Object owner, Component component, string ownerName, List<EventEntry> events)

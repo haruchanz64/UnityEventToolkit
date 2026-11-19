@@ -1,0 +1,19 @@
+{
+  "name": "com.haruchanz64.unity-event-toolkit",
+  "version": "1.0.0",
+  "displayName": "Unity Event Toolkit",
+  "description": "A custom Unity Editor tool to find, inspect, and clean up UnityEvent bindings in your scenes.",
+  "unity": "6000.0",
+  "keywords": [
+    "unity",
+    "unityevent",
+    "editor",
+    "tools",
+    "inspector"
+  ],
+  "license": "MIT",
+  "author": {
+    "name": "haruchanz64",
+    "url": "https://github.com/haruchanz64/UnityEventToolkit"
+  }
+}
