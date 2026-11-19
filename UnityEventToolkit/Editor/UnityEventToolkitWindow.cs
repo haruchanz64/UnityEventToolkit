@@ -20,7 +20,7 @@ namespace UnityEventToolkit.Editor
         private List<UnityEventScanner.EventEntry> _allEventEntries = new();
         private List<UnityEventScanner.EventEntry> _filteredEntries = new();
 
-        private List<GameObject> _gameObjectsWithEvents = new();
+        private readonly HashSet<GameObject> _gameObjectsWithEvents = new();
         private readonly HashSet<GameObject> _selectedGameObjects = new();
 
         private readonly Dictionary<GameObject, bool> _expandedStates = new();
@@ -42,6 +42,8 @@ namespace UnityEventToolkit.Editor
             RefreshEventList();
             EditorApplication.hierarchyChanged += OnHierarchyChanged;
             EditorSceneManager.sceneOpened += OnSceneOpened;
+            EditorSceneManager.sceneClosed += OnSceneClosed;
+            Undo.undoRedoPerformed += OnUndoRedoPerformed;
             EditorApplication.update += OnUpdate;
         }
 
@@ -49,70 +51,73 @@ namespace UnityEventToolkit.Editor
         {
             EditorApplication.hierarchyChanged -= OnHierarchyChanged;
             EditorSceneManager.sceneOpened -= OnSceneOpened;
+            EditorSceneManager.sceneClosed -= OnSceneClosed;
+            Undo.undoRedoPerformed -= OnUndoRedoPerformed;
             EditorApplication.update -= OnUpdate;
         }
 
         private void OnHierarchyChanged() => _isDirty = true;
 
+        private void OnUndoRedoPerformed() => _isDirty = true;
+
         private void OnUpdate()
         {
             if (!_isDirty) return;
-            RefreshEventList();
             _isDirty = false;
+            RefreshEventList();
+            Repaint();
         }
 
         private void OnSceneOpened(Scene scene, OpenSceneMode mode) => RefreshEventList();
 
+        private void OnSceneClosed(Scene scene) => RefreshEventList();
+
         private void RefreshEventList()
         {
             _allEventEntries = UnityEventScanner.ScanAllUnityEvents();
+            RebuildFilteredView();
+        }
+
+        private void RebuildFilteredView()
+        {
             ApplyFilterAndSearch();
 
             _gameObjectsWithEvents.Clear();
-            var uniqueGameObjects = new HashSet<GameObject>(); // Use a HashSet to avoid duplicates
+            var matchedGameObjects = new HashSet<GameObject>();
 
-            // Collect all GameObjects with events and their parents
+            // Collect all matched GameObjects and their ancestor chain
             foreach (var entry in _filteredEntries)
             {
-                var go = entry.OwnerObject switch
-                {
-                    GameObject obj => obj,
-                    Component comp => comp.gameObject,
-                    _ => null
-                };
-
+                var go = GetEntryGameObject(entry);
                 if (!go) continue;
 
-                // Add the GameObject and all its parents
+                matchedGameObjects.Add(go);
+
                 var t = go.transform;
                 while (t)
                 {
-                    uniqueGameObjects.Add(t.gameObject); // Add to HashSet
+                    _gameObjectsWithEvents.Add(t.gameObject);
                     t = t.parent;
                 }
             }
 
-            // Now convert the HashSet to a List for _gameObjectsWithEvents
-            _gameObjectsWithEvents = uniqueGameObjects.ToList();
-            
-            // Remove states that no longer apply
-            _expandedStates.Keys.Where(go => !_gameObjectsWithEvents.Contains(go)).ToList()
-                .ForEach(go => _expandedStates.Remove(go));
+            // Remove states that no longer apply or reference destroyed objects
+            var staleKeys = _expandedStates.Keys.Where(go => !go || !_gameObjectsWithEvents.Contains(go)).ToList();
+            foreach (var key in staleKeys)
+                _expandedStates.Remove(key);
 
-            _selectedGameObjects.RemoveWhere(go => !_gameObjectsWithEvents.Contains(go));
-            if (_lastClickedGameObject && !_gameObjectsWithEvents.Contains(_lastClickedGameObject))
+            _selectedGameObjects.RemoveWhere(go => !go || !_gameObjectsWithEvents.Contains(go));
+            if (!_lastClickedGameObject || !_gameObjectsWithEvents.Contains(_lastClickedGameObject))
                 _lastClickedGameObject = null;
 
-            // Auto-expand parents if searching
+            // Auto-expand parents of all matched GameObjects when searching (by GameObject name or event field name)
             if (!string.IsNullOrEmpty(_searchQuery))
             {
-                _gameObjectsWithEvents
-                    .Where(go => go.name.IndexOf(_searchQuery, StringComparison.OrdinalIgnoreCase) >= 0)
-                    // Corrected line: Transform the IEnumerable<Transform> from GetParents
-                    // into an IEnumerable<GameObject> before SelectMany flattens it.
-                    .SelectMany(go => GetParents(go.transform).Select(parentTransform => parentTransform.gameObject))
-                    .ToList()
-                    .ForEach(parent => _expandedStates[parent] = true); // 'parent' is now definitely a GameObject
+                foreach (var go in matchedGameObjects)
+                {
+                    foreach (var parentTransform in GetParents(go.transform))
+                        _expandedStates[parentTransform.gameObject] = true;
+                }
             }
 
             return;
@@ -127,7 +132,20 @@ namespace UnityEventToolkit.Editor
                 }
             }
         }
-        
+
+        private static GameObject GetEntryGameObject(UnityEventScanner.EventEntry entry)
+        {
+            if (entry == null || !entry.OwnerObject)
+                return null;
+
+            return entry.OwnerObject switch
+            {
+                GameObject obj => obj,
+                Component comp => comp.gameObject,
+                _ => null
+            };
+        }
+
         private void ApplyFilterAndSearch()
         {
             _filteredEntries = string.IsNullOrEmpty(_searchQuery)
@@ -170,19 +188,17 @@ namespace UnityEventToolkit.Editor
             if (newQuery != _searchQuery)
             {
                 _searchQuery = newQuery;
-                ApplyFilterAndSearch();
-                RefreshEventList();
+                RebuildFilteredView();
             }
 
             GUILayout.Space(10);
             GUILayout.Label("Filter:", GUILayout.Width(40));
             var selectedIndex = EditorGUILayout.Popup(Array.IndexOf(_filterOptions, _selectedFilter), _filterOptions,
                 GUILayout.Width(100));
-            if (_filterOptions[selectedIndex] != _selectedFilter)
+            if (selectedIndex >= 0 && _filterOptions[selectedIndex] != _selectedFilter)
             {
                 _selectedFilter = _filterOptions[selectedIndex];
-                ApplyFilterAndSearch();
-                RefreshEventList();
+                RebuildFilteredView();
             }
 
             GUILayout.FlexibleSpace();
@@ -190,8 +206,7 @@ namespace UnityEventToolkit.Editor
             if (GUILayout.Button("Clear Search", EditorStyles.toolbarButton, GUILayout.Width(100)))
             {
                 _searchQuery = "";
-                ApplyFilterAndSearch();
-                RefreshEventList();
+                RebuildFilteredView();
             }
 
             EditorGUILayout.EndHorizontal();
@@ -214,13 +229,14 @@ namespace UnityEventToolkit.Editor
             // Clear and rebuild flatGameObjectList each frame before drawing
             _flatGameObjectList.Clear();
 
-            if (_gameObjectsWithEvents.Count == 0)
+            var roots = GetRootGameObjects(_gameObjectsWithEvents);
+            if (roots.Count == 0)
             {
                 EditorGUILayout.LabelField("No GameObjects found.");
             }
             else
             {
-                foreach (var root in GetRootGameObjects(_gameObjectsWithEvents))
+                foreach (var root in roots)
                 {
                     DrawGameObjectHierarchy(root, 0);
                 }
@@ -232,6 +248,8 @@ namespace UnityEventToolkit.Editor
 
         private void DrawGameObjectHierarchy(GameObject go, int indent)
         {
+            if (!go) return;
+
             // Add to flat list *here*, ensuring it's added only once per drawn item
             _flatGameObjectList.Add(go);
 
@@ -239,7 +257,7 @@ namespace UnityEventToolkit.Editor
             GUILayout.Space(indent * 15);
 
             var hasChildrenInEvents = go.transform.Cast<Transform>()
-                .Any(child => _gameObjectsWithEvents.Contains(child.gameObject));
+                .Any(child => child && _gameObjectsWithEvents.Contains(child.gameObject));
 
             // Ensure the foldout state exists
             _expandedStates.TryAdd(go, true); // Default to expanded
@@ -247,11 +265,12 @@ namespace UnityEventToolkit.Editor
             // If it has children that are part of the 'gameObjectsWithEvents' list, it should be foldable
             if (hasChildrenInEvents)
             {
-                var foldRect = GUILayoutUtility.GetRect(new GUIContent(go.name), EditorStyles.foldout);
-                _expandedStates[go] = EditorGUI.Foldout(foldRect, _expandedStates[go], GUIContent.none, false);
+                var rowRect = GUILayoutUtility.GetRect(new GUIContent(go.name), EditorStyles.foldout);
+                const float foldoutWidth = 15f;
+                var foldRect = new Rect(rowRect.x, rowRect.y, foldoutWidth, rowRect.height);
+                var labelRect = new Rect(rowRect.x + foldoutWidth, rowRect.y, Mathf.Max(0f, rowRect.width - foldoutWidth), rowRect.height);
 
-                var labelRect = foldRect;
-                labelRect.x += 15;
+                _expandedStates[go] = EditorGUI.Foldout(foldRect, _expandedStates[go], GUIContent.none, false);
 
                 if (_selectedGameObjects.Contains(go))
                     EditorGUI.DrawRect(labelRect, new Color(0.24f, 0.48f, 0.90f, 0.3f));
@@ -264,7 +283,7 @@ namespace UnityEventToolkit.Editor
                 // Only draw children if expanded
                 if (!_expandedStates[go]) return;
                 var children = go.transform.Cast<Transform>()
-                    .Where(child => _gameObjectsWithEvents.Contains(child.gameObject))
+                    .Where(child => child && _gameObjectsWithEvents.Contains(child.gameObject))
                     .ToList();
                 children.Sort((a, b) => a.GetSiblingIndex().CompareTo(b.GetSiblingIndex()));
                 foreach (var child in children)
@@ -288,7 +307,10 @@ namespace UnityEventToolkit.Editor
         private void SetAllExpanded(bool expanded)
         {
             foreach (var go in _gameObjectsWithEvents)
-                _expandedStates[go] = expanded;
+            {
+                if (go)
+                    _expandedStates[go] = expanded;
+            }
         }
 
         private void HandleSelection(GameObject go, Event e)
@@ -329,13 +351,20 @@ namespace UnityEventToolkit.Editor
             Repaint();
         }
 
-
-        private static List<GameObject> GetRootGameObjects(List<GameObject> gameObjects)
+        private static List<GameObject> GetRootGameObjects(HashSet<GameObject> gameObjects)
         {
-            var roots = gameObjects.Where(go => !go.transform.parent || !gameObjects.Contains(go.transform.parent.gameObject)).ToList();
+            var roots = gameObjects
+                .Where(go => go && (!go.transform.parent || !gameObjects.Contains(go.transform.parent.gameObject)))
+                .ToList();
 
-            // Sort the root GameObjects by their sibling index
-            roots.Sort((a, b) => a.transform.GetSiblingIndex().CompareTo(b.transform.GetSiblingIndex()));
+            // Sort deterministically by scene handle, then sibling index
+            roots.Sort((a, b) =>
+            {
+                var sceneCompare = a.scene.handle.CompareTo(b.scene.handle);
+                return sceneCompare != 0
+                    ? sceneCompare
+                    : a.transform.GetSiblingIndex().CompareTo(b.transform.GetSiblingIndex());
+            });
 
             return roots;
         }
@@ -355,10 +384,10 @@ namespace UnityEventToolkit.Editor
             {
                 foreach (var selected in _selectedGameObjects)
                 {
+                    if (!selected) continue;
+
                     EditorGUILayout.LabelField(selected.name, EditorStyles.boldLabel);
-                    var events = _filteredEntries.FindAll(e =>
-                        e.OwnerObject == selected ||
-                        (e.OwnerObject is Component comp && comp.gameObject == selected));
+                    var events = _filteredEntries.FindAll(e => GetEntryGameObject(e) == selected);
 
                     if (events.Count == 0)
                     {
@@ -376,19 +405,30 @@ namespace UnityEventToolkit.Editor
             EditorGUILayout.EndVertical();
         }
 
-        private static void DrawEventEntry(UnityEventScanner.EventEntry entry)
+        private void DrawEventEntry(UnityEventScanner.EventEntry entry)
         {
+            if (entry == null || !entry.OwnerObject)
+                return;
+
             EditorGUILayout.BeginVertical("box");
-            EditorGUILayout.LabelField($"Event: {entry.FieldName}", EditorStyles.boldLabel);
+
+            var title = entry.Component
+                ? $"Event: {entry.Component.GetType().Name}.{entry.FieldName}"
+                : $"Event: {entry.FieldName}";
+            EditorGUILayout.LabelField(title, EditorStyles.boldLabel);
 
             EditorGUILayout.Space(5);
 
-            var so = new SerializedObject(entry.OwnerObject);
-            var eventProp = so.FindProperty(entry.FieldName);
-            if (eventProp != null)
+            using (var so = new SerializedObject(entry.OwnerObject))
             {
-                EditorGUILayout.PropertyField(eventProp, true);
-                so.ApplyModifiedProperties();
+                so.Update();
+                var eventProp = so.FindProperty(entry.FieldName);
+                if (eventProp != null)
+                {
+                    EditorGUILayout.PropertyField(eventProp, true);
+                    if (so.ApplyModifiedProperties())
+                        _isDirty = true;
+                }
             }
 
             EditorGUILayout.Space(5);
@@ -398,7 +438,7 @@ namespace UnityEventToolkit.Editor
             EditorGUILayout.Space(8);
         }
 
-        private static void DrawListeners(UnityEventScanner.EventEntry entry)
+        private void DrawListeners(UnityEventScanner.EventEntry entry)
         {
             if (entry.Listeners.Count == 0)
             {
@@ -416,8 +456,18 @@ namespace UnityEventToolkit.Editor
                 }
             }
 
-            if (GUILayout.Button("Remove Broken Listeners", GUILayout.Width(200)))
-                EditorUtils.RemoveBrokenListeners(entry);
+            var hasBroken = entry.Listeners.Exists(l => l.IsBroken);
+            using (new EditorGUI.DisabledScope(!hasBroken))
+            {
+                if (GUILayout.Button("Remove Broken Listeners", GUILayout.Width(200)))
+                {
+                    if (EditorUtils.RemoveBrokenListeners(entry) > 0)
+                    {
+                        _isDirty = true;
+                        Repaint();
+                    }
+                }
+            }
         }
     }
 }
