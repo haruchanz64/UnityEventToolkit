@@ -20,13 +20,14 @@
 ## Installation
 
 **Option 1: Download ZIP**
-1.  Download as **ZIP**.
-2. Extract and drop the folder into your `Assets` directory.
+1. Download the repository as a **ZIP** (`Code > Download ZIP`).
+2. Extract and drop the folder into your Unity project's `Assets` directory.
 
-**Option 2: Download Unity Package**
-1. Go to the **[Releases](https://github.com/haruchanz64/UnityEventToolkit/releases)** tab.
-2. Download the latest `.unitypackage` file.
-3. Import it into your project using `Assets > Import Package > Custom Package`.
+**Option 2: Git Clone**
+1. Clone this repository directly into your Unity project's `Assets` directory:
+   ```bash
+   git clone https://github.com/haruchanz64/UnityEventToolkit.git Assets/UnityEventToolkit
+   ```
 
 ---
 
